@@ -8,9 +8,10 @@ Small GUI tool to search Ipemotion logger `.LOG` (and optional `.ZIP`) files for
 
 - Python 3.8+ (with `tkinter`)
 - These files in the **same folder**:
-  - `logfilter_gui_2.py`
+  - `logfilter_gui.py`
   - `logfilter_v2.py`
   - `log_filter_config.json` 
+  - `Logfilter.ico`
 - Recommended Python packages:
  
 In powershell/bash/cmd run:
@@ -20,12 +21,11 @@ In powershell/bash/cmd run:
 
 From the folder with the files:
 
-python logfilter_gui_2.py
+python logfilter_gui.py
 
 
 The window Ipemotion LOG file filter will open. 
 
-logfilter_gui_2
 
 🧩 Basic use
 
