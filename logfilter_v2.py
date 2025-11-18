@@ -136,7 +136,7 @@ def find_files_by_serial_and_date(base_path: str,
         raise ValueError("Minst ett serienummer krävs.")
 
     # Prefix som förekommer i dina mappar
-    serial_folder_re = re.compile(r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3)_?(?P<sn>\d+)$", re.IGNORECASE)
+    serial_folder_re = re.compile(r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$", re.IGNORECASE)
 
     # Datumintervall
     wanted_window = (date_from if date_from else date.min,

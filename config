@@ -1,0 +1,20 @@
+{
+    "keywords": [
+        "CCP: EPK",
+        "Configuration file:"
+    ],
+    "highlight_words": {
+        "mismatch": "RED",
+        "match": "GREEN",
+        "Configuration file:": "BLUE"
+    },
+    "defaults": {
+        "base_path": "\\\\global.scd.scania.com\\app\\RoD\\vda-logger-data\\LogfilesIpemotionRT",
+        "serials": [
+            "82902308"
+        ],
+        "include_zips": true,
+        "output_prefix": "filtered_log_results",
+        "profile": "default"
+    }
+}
