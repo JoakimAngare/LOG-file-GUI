@@ -2,6 +2,7 @@ LOG File Filtering GUI for Ipemotion / Scania VDA
 
 A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets.
 
+![alt text](image.png)
 
 ✨ Features
 🔍 Smart Serial & Vehicle Detection
