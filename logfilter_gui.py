@@ -5,6 +5,9 @@ from tkinter import ttk, messagebox, filedialog
 import queue
 import contextlib
 import datetime as _dt
+import re
+import json
+
 
 try:
     from tkcalendar import DateEntry  # pip install tkcalendar
@@ -63,6 +66,10 @@ class App(ttk.Frame):
         self._log_entries = []  # [(time:str, text:str, tag:str)]
         self._start_log_pump()
 
+        # Mapping from dropdown label -> pure serial number
+        self._serial_display_to_sn = {}
+
+
         # Filterstates
         self.show_error = tk.BooleanVar(value=True)
         self.show_warn  = tk.BooleanVar(value=True)
@@ -73,8 +80,188 @@ class App(ttk.Frame):
         self._build_widgets()
         self._load_defaults()
 
+    def _serial_cache_path(self) -> str:
+        """Where to store cached vehicle/serial list."""
+        # Same folder as the config file
+        folder = os.path.dirname(self.config_path)
+        if not folder:
+            folder = os.getcwd()
+        return os.path.join(folder, "logfilter_serial_cache.json")
+
+    def _load_serial_cache(self, base: str):
+        """Try to load cached serial/vehicle list for this base path."""
+        path = self._serial_cache_path()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("base") != base:
+                return [], {}
+            items = data.get("items") or []
+            mapping = data.get("mapping") or {}
+            # Ensure mapping only has keys from items
+            mapping = {k: mapping.get(k, k) for k in items}
+            return items, mapping
+        except Exception:
+            return [], {}
+
+    def _save_serial_cache(self, base: str, items, mapping):
+        """Save serial/vehicle list to cache."""
+        path = self._serial_cache_path()
+        try:
+            data = {
+                "base": base,
+                "items": list(items),
+                "mapping": mapping,
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            # Cache errors should never break the app
+            pass
+
+    
+    def _update_serial_list(self, base: str):
+        """Compute serial dropdown contents for a given base path.
+
+        Returns (display_items, mapping) where:
+        - display_items: list of labels, e.g. ['Miguel (82902308)', '12345678', ...]
+        - mapping: {label -> serial_number}
+        """
+        display_items = []
+        mapping = {}
+
+        if base and os.path.isdir(base):
+            try:
+                # Same pattern as in logfilter_v2.find_files_by_serial_and_date
+                serial_folder_re = re.compile(
+                    r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$",
+                    re.IGNORECASE,
+                )
+
+                for entry in os.scandir(base):
+                    if not entry.is_dir():
+                        continue
+                    m = serial_folder_re.match(entry.name)
+                    if not m:
+                        continue
+
+                    sn = m.group("sn")
+
+                    # Find latest file (ZIP/LOG) in this logger folder
+                    latest_date = None
+                    latest_name = None  # vehicle name candidate
+
+                    for root, dirs, files in os.walk(entry.path):
+                        for fname in files:
+                            upper = fname.upper()
+                            if not (upper.endswith(".LOG") or upper.endswith(".ZIP")):
+                                continue
+                            fpath = os.path.join(root, fname)
+
+                            # Use same date logic as backend
+                            try:
+                                start_date, end_date = lf._file_date_window(fpath)
+                                file_date = end_date or start_date
+                            except Exception:
+                                file_date = None
+
+                            # Extract vehicle name from filename: prefix before first "_"
+                            veh = None
+                            base_fname = os.path.basename(fname)
+                            mname = re.match(r"([^_]+)_", base_fname)
+                            if mname:
+                                veh = mname.group(1)
+
+                            # Decide if this is the newest file we've seen
+                            if file_date is not None:
+                                if latest_date is None or file_date > latest_date:
+                                    latest_date = file_date
+                                    latest_name = veh
+                            elif latest_date is None and veh:
+                                # fallback: if we have no date yet, at least take a name
+                                latest_name = veh
+
+                    # Build display text
+                    if latest_name:
+                        label = f"{latest_name} ({sn})"
+                    else:
+                        label = sn
+
+                    mapping[label] = sn
+                    display_items.append(label)
+
+            except Exception as e:
+                self._append_log(f"Could not scan serial folders: {e}\n")
+
+        display_items = sorted(set(display_items))
+        return display_items, mapping
+    
+    def _refresh_serials_async(self):
+        """Run serial scan in a background thread and update the dropdown when done."""
+        base = self.var_base.get().strip()
+
+        def apply_to_gui(display_items, mapping, status_text=None):
+            self._serial_display_to_sn = mapping
+            self.cbo_serials["values"] = display_items
+
+            if display_items:
+                self.cbo_serials.current(0)
+            else:
+                self.var_serial_choice.set("")
+
+            if status_text:
+                self.var_status.set(status_text)
+
+        # 1) Try cached data first (instant if available)
+        cached_items, cached_mapping = self._load_serial_cache(base)
+        if cached_items:
+            # Show cached list immediately
+            self.after(
+                0,
+                lambda: apply_to_gui(
+                    cached_items,
+                    cached_mapping,
+                    "Vehicle list (cached)… updating in background.",
+                ),
+            )
+        else:
+            # No cache yet
+            self.var_status.set("Loading vehicle list…")
+
+        # 2) Always refresh in background to catch new vehicles/loggers
+        def worker():
+            display_items, mapping = self._update_serial_list(base)
+            # Save cache for next run
+            self._save_serial_cache(base, display_items, mapping)
+
+            def apply():
+                apply_to_gui(display_items, mapping, "Vehicle list loaded.")
+            self.after(0, apply)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+
+
+    def _on_serial_selected(self, event=None):
+        """When a dropdown item is chosen, use *only* its serial number in the Text field."""
+        label = self.var_serial_choice.get().strip()
+        if not label:
+            return
+
+        # Map from "Miguel (82902308)" -> "82902308"
+        sn = self._serial_display_to_sn.get(label, label)
+        sn = sn.strip()
+        if not sn:
+            return
+
+        # Replace any existing content with this single serial
+        self.txt_serials.delete("1.0", tk.END)
+        self.txt_serials.insert("1.0", sn)
+
+
+
     def _build_widgets(self):
-        # Layout: två kolumner
+        # Layout: two columns
         self.columnconfigure(1, weight=1)
 
         # Base path (UNC)
@@ -85,12 +272,39 @@ class App(ttk.Frame):
         self.var_base = tk.StringVar()
         self.ent_base = ttk.Entry(base_frame, textvariable=self.var_base)
         self.ent_base.grid(row=0, column=0, sticky="ew")
-        ttk.Button(base_frame, text="Bläddra…", command=self._browse_base).grid(row=0, column=1, padx=(6,0))
-
+        ttk.Button(base_frame, text="Browse…", command=self._browse_base).grid(row=0, column=1, padx=(6,0))
+        
         # Serial numbers
-        ttk.Label(self, text="Serial numbers (comma or newline separated)").grid(row=1, column=0, sticky="nw", padx=(0,8))
-        self.txt_serials = tk.Text(self, height=4, width=40)
-        self.txt_serials.grid(row=1, column=1, sticky="ew")
+        ttk.Label(self, text="Serial numbers (comma or newline separated)").grid(
+            row=1, column=0, sticky="nw", padx=(0, 8)
+        )
+
+        serial_frame = ttk.Frame(self)
+        serial_frame.grid(row=1, column=1, sticky="ew")
+        serial_frame.columnconfigure(0, weight=1)
+
+        # Dropdown with detected serials
+        self.var_serial_choice = tk.StringVar()
+        self.cbo_serials = ttk.Combobox(
+            serial_frame,
+            textvariable=self.var_serial_choice,
+            state="readonly",
+            values=[],  # will be filled based on base path
+            width=20,
+        )
+        self.cbo_serials.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.cbo_serials.bind("<<ComboboxSelected>>", self._on_serial_selected)
+
+        # NEW: "Refresh" button next to dropdown
+        ttk.Button(
+            serial_frame,
+            text="Refresh vehicle list",
+            command=self._refresh_serials_async,
+        ).grid(row=0, column=1, padx=(6, 0), pady=(0, 4), sticky="w")
+
+        self.txt_serials = tk.Text(serial_frame, height=4, width=40)
+        self.txt_serials.grid(row=1, column=0, columnspan=2, sticky="ew")
+
 
         # Date range
         row = 2
@@ -190,16 +404,25 @@ class App(ttk.Frame):
         prefix = self.defaults.get("output_prefix", "filtered_log_results")
 
         self.var_base.set(base)
-        self.txt_serials.clear() if False else None  # placeholder to ensure no edits elsewhere
+        # keep existing behavior with the text box
         self.txt_serials.delete("1.0", tk.END)
         self.txt_serials.insert("1.0", "\n".join(serials))
         self.var_zip.set(include_zips)
         self.var_prefix.set(prefix)
 
+        # New: refresh serials for dropdown based on base path
+        self._refresh_serials_async()
+
+
     def _browse_base(self):
         path = filedialog.askdirectory(title="Choose base path")
         if path:
             self.var_base.set(path)
+            # Update serial dropdown when base path changes (in background)
+            self._refresh_serials_async()
+
+
+
 
     def _parse_date_widget(self, widget):
         try:

@@ -1,69 +1,114 @@
-# Ipemotion LOG Filter – GUI
+LOG File Filtering GUI for Ipemotion / Scania VDA
 
-Small GUI tool to search Ipemotion logger `.LOG` (and optional `.ZIP`) files for configured keywords and save matches to text + HTML reports. :contentReference[oaicite:0]{index=0}
+A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets.
 
----
 
-## ✅ Requirements
+✨ Features
+🔍 Smart Serial & Vehicle Detection
 
-- Python 3.8+ (with `tkinter`)
-- These files in the **same folder**:
-  - `logfilter_gui.py`
-  - `logfilter_v2.py`
-  - `log_filter_config.json` 
-  - `Logfilter.ico`
-- Recommended Python packages:
- 
-In powershell/bash/cmd run:
-  pip install tkcalendar sv-ttk
+Automatically finds logger folders in the base path
 
-  ▶️ Start GUI
+Extracts vehicle name from the latest LOG/ZIP file
 
-From the folder with the files:
+Shows entries as Miguel (82902308) for easy selection
 
+Cached for instant startup
+
+⚡ Fast & Asynchronous
+
+UI stays responsive during file scanning
+
+Background updating of logger list
+
+Manual Refresh vehicle list button
+
+📄 Advanced Filtering
+
+Search through LOG and ZIP files
+
+Keyword filtering with highlight colors
+
+Export to HTML and TXT
+
+Status log with color-coded messages
+
+🛠 Configuration
+
+Uses a simple JSON config:
+
+log_filter_config.json
+
+
+includes:
+
+keyword list
+
+highlight colors
+
+default base path & serial number
+
+ZIP include toggle
+
+output filename prefix
+
+🚀 Getting Started
+1. Install dependencies
+pip install tkcalendar sv-ttk
+
+
+(Optional: venv recommended.)
+
+2. Run
 python logfilter_gui.py
 
+3. Set base path
 
-The window Ipemotion LOG file filter will open. 
+Select your UNC or local directory containing:
 
+IPELOG_12345678/
+    Miguel_20250101_T090848_..._LOG_1234.zip
 
-🧩 Basic use
+4. Select vehicle/serial
 
-📂 Base path
-Select the root folder with the Ipemotion log folders
-(default comes from log_filter_config.json).
+Dropdown shows:
+✔ Vehicle name
+✔ Serial number
 
-🔢 Serial numbers
-Enter one or more logger serials
-(comma or new line separated, e.g. 82902308, 82902309).
+5. Select date range, run filter
 
-📅 From / To date
+Results saved as:
 
-If tkcalendar is installed: pick dates in the calendar.
+filtered_log_results.txt
+filtered_log_results.html
 
-Otherwise: type dates as YYYY-MM-DD.
-Leave empty to search all dates.
+🧩 File Structure
+log_filter_config.json         # main config
+logfilter_serial_cache.json    # auto-generated cache
+logfilter_gui.py               # GUI
+logfilter_v2.py                # filter logic
+assets/                        # icons, screenshots
 
-📦 Include ZIP files
-Tick this if logs are stored inside .zip files.
+📦 Releases
 
-📝 Output prefix
-Name prefix for the result files
-(default: filtered_log_results).
+Download the latest release:
+👉 https://github.com/JoakimAngare/LOG-file-GUI/releases
 
-▶️ Click “Run filtering”
-Progress and status messages are shown in the log at the bottom.
+🏷 Versioning
 
-📄 Output
+This project uses Semantic Versioning.
 
-After each run you get:
+v1.1.0 → new features, backward compatible
 
-<prefix>_results.txt – plain-text summary of all matches (This can be changed to vehicle name for ex to keep track of multiple searches)
+v1.0.x → patches/fixes
 
-<prefix>_results.html – HTML report with highlighted lines (This can be changed to vehicle name for ex to keep track of multiple searches)
+v2.0.0 → breaking changes
 
-You can open them directly with the buttons:
+🐛 Reporting Issues
 
-Open HTML results
+Open an issue here:
+https://github.com/JoakimAngare/LOG-file-GUI/issues
 
-Open TXT results
+🤝 Contributing
+
+PRs welcome!
+Fork the repo and submit improvements any time.
