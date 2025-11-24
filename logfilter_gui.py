@@ -240,29 +240,82 @@ class App(ttk.Frame):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _add_all_vehicles_from_cache(self):
+        """Fyll serienummer-rutan med ALLA serienummer från cachen (komma-separerade)."""
+        base = self.var_base.get().strip()
+        if not base:
+            messagebox.showwarning(APP_TITLE, "Enter base path first.")
+            return
+
+        items, mapping = self._load_serial_cache(base)
+        if not items:
+            messagebox.showinfo(
+                APP_TITLE,
+                "No cached vehicle list found.\nClick 'Refresh vehicle list' first."
+            )
+            return
+
+        # Ta ut alla serienummer från mapping (fallback: label om något skulle saknas)
+        serials = sorted({
+            (mapping.get(label, label) or "").strip()
+            for label in items
+            if label
+        })
+
+        if not serials:
+            messagebox.showinfo(APP_TITLE, "No serial numbers found in cache.")
+            return
+
+        # Skriv in som komma-separerad lista i textboxen (ersätter allt)
+        self.txt_serials.delete("1.0", tk.END)
+        self.txt_serials.insert("1.0", ", ".join(serials))
+
+
 
 
     def _on_serial_selected(self, event=None):
-        """When a dropdown item is chosen, use *only* its serial number in the Text field."""
         label = self.var_serial_choice.get().strip()
         if not label:
             return
 
-        # Map from "Miguel (82902308)" -> "82902308"
-        sn = self._serial_display_to_sn.get(label, label)
-        sn = sn.strip()
+        # Map "Name (12345678)" -> "12345678"
+        sn = self._serial_display_to_sn.get(label, label).strip()
         if not sn:
             return
 
-        # Replace any existing content with this single serial
+        # Hämta befintliga serienummer
+        current = self.txt_serials.get("1.0", tk.END).strip()
+
+        # Om rutan är tom, skriv första SN direkt
+        if not current:
+            serial_list = [sn]
+
+        else:
+            # Gör set med befintliga SN
+            parts = current.replace(";", ",").replace("\n", ",").split(",")
+            serial_list = [p.strip() for p in parts if p.strip()]
+
+
+            # Om redan finns – gör inget
+            if sn in serial_list:
+                return
+
+            # Annars lägg till nederst
+            serial_list.append(sn)
+
+        # Bygg komma-separerad sträng
+        new_text = ", ".join(serial_list)
+
         self.txt_serials.delete("1.0", tk.END)
-        self.txt_serials.insert("1.0", sn)
+        self.txt_serials.insert("1.0", new_text)
+
 
 
 
     def _build_widgets(self):
         # Layout: two columns
         self.columnconfigure(1, weight=1)
+        self.rowconfigure(1, weight=1)
 
         # Base path (UNC)
         ttk.Label(self, text="Base path (UNC)").grid(row=0, column=0, sticky="w", padx=(0,8), pady=(0,6))
@@ -280,8 +333,10 @@ class App(ttk.Frame):
         )
 
         serial_frame = ttk.Frame(self)
-        serial_frame.grid(row=1, column=1, sticky="ew")
+        serial_frame.grid(row=1, column=1, sticky="nsew")  
         serial_frame.columnconfigure(0, weight=1)
+        serial_frame.rowconfigure(1, weight=1)
+
 
         # Dropdown with detected serials
         self.var_serial_choice = tk.StringVar()
@@ -302,8 +357,15 @@ class App(ttk.Frame):
             command=self._refresh_serials_async,
         ).grid(row=0, column=1, padx=(6, 0), pady=(0, 4), sticky="w")
 
-        self.txt_serials = tk.Text(serial_frame, height=4, width=40)
-        self.txt_serials.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.txt_serials = tk.Text(serial_frame, height=8, width=80)
+        self.txt_serials.grid(row=1, column=0, columnspan=3, sticky="nsew")
+
+        # NEW: "Add all vehicles" button
+        ttk.Button(
+            serial_frame,
+            text="Add all vehicles",
+            command=self._add_all_vehicles_from_cache,
+        ).grid(row=0, column=2, padx=(6, 0), pady=(0, 4), sticky="w")
 
 
         # Date range
@@ -343,10 +405,14 @@ class App(ttk.Frame):
         self.btn_run = ttk.Button(btn_frame, text="Run filtering", command=self._on_run)
         self.btn_run.grid(row=0, column=0)
         ttk.Button(btn_frame, text="Open HTML results", command=self._open_html).grid(row=0, column=1, padx=(8,0))
-        # NEW: button to open TXT results
+        # Button to open TXT results
         ttk.Button(btn_frame, text="Open TXT results", command=self._open_txt).grid(row=0, column=2, padx=(8,0))
+        # Button run summary 
+        ttk.Button(btn_frame, text="Run summary", command=self._on_run_daily_summary).grid(row=0, column=3, padx=(8,0))
+        # Open summary report button
+        ttk.Button(btn_frame, text="Open Summary report", command=self._open_daily_summary_html).grid(row=0, column=4, padx=(8,0))
         # Reset to defaults button
-        ttk.Button(btn_frame, text="Reset to defaults", command=self._load_defaults).grid(row=0, column=3, padx=(8,0))
+        ttk.Button(btn_frame, text="Reset to defaults", command=self._load_defaults).grid(row=0, column=5, padx=(8,0))
 
         # Status
         row += 1
@@ -449,7 +515,7 @@ class App(ttk.Frame):
         prefix = self.var_prefix.get().strip() or "filtered_log_results"
 
         return base_path, serials, date_from, date_to, include_zips, prefix
-
+    
     def _on_run(self):
         base_path, serials, date_from, date_to, include_zips, prefix = self._collect_inputs()
         if not base_path:
@@ -474,6 +540,42 @@ class App(ttk.Frame):
         self._append_log(info)
         t.start()
 
+    def _on_run_daily_summary(self):
+        """
+        Kör en dags-sammanfattning:
+        - Alla serienummer i text-rutan.
+        - Datum = idag.
+        - Skapar <prefix>_daily_summary.html.
+        """
+        base_path, serials, date_from, date_to, include_zips, prefix = self._collect_inputs()
+        if not base_path:
+            messagebox.showwarning(APP_TITLE, "Enter base path (UNC or local folder).")
+            return
+        if not serials:
+            messagebox.showwarning(APP_TITLE, "Enter at least one serial number.")
+            return
+
+        today = _dt.date.today()
+        daily_prefix = prefix or "daily_summary"
+
+        t = threading.Thread(
+            target=self._run_daily_task,
+            args=(base_path, serials, include_zips, daily_prefix, today),
+            daemon=True,
+        )
+        self._set_busy(True)
+        info = (
+            "\n=== Starting SUMMARY ===\n"
+            f"Base path: {base_path}\n"
+            f"Serial numbers: {', '.join(serials)}\n"
+            f"Date: {today}\n"
+            f"Include ZIP: {include_zips}\n"
+            f"Output prefix: {daily_prefix}\n"
+        )
+        self._append_log(info)
+        t.start()
+
+    
     def _set_busy(self, busy: bool):
         if busy:
             self.var_status.set("Working…")
@@ -540,6 +642,38 @@ class App(ttk.Frame):
             self._notify(f"Error: {e}")
         finally:
             self._set_busy(False)
+
+    def _run_daily_task(self, base_path, serials, include_zips, prefix, date_for):
+        class _QueueWriter:
+            def __init__(self, q): self.q = q
+            def write(self, s):
+                if s:
+                    self.q.put(s)
+            def flush(self): pass
+
+        qw = _QueueWriter(self._log_q)
+        try:
+            with contextlib.redirect_stdout(qw), contextlib.redirect_stderr(qw):
+                print("Running summary…")
+                lf.run_daily_summary(
+                    base_path=base_path,
+                    serials=serials,
+                    date_for=date_for,
+                    include_zips=include_zips,
+                    output_prefix=prefix,
+                    keywords=self.keywords,
+                    highlight_words=self.highlight_words,
+                )
+                html_path = os.path.abspath(f"{prefix}_daily_summary.html")
+                msg = f"summary completed.\nHTML: {html_path}"
+                print(msg)
+                self._notify(msg)
+        except Exception as e:
+            print(f"Error in summary: {e}")
+            self._notify(f"Error: {e}")
+        finally:
+            self._set_busy(False)
+
 
     def _notify(self, text: str):
         self.var_status.set(text.replace("\n", " ")[:120])
@@ -637,6 +771,23 @@ class App(ttk.Frame):
                 subprocess.Popen([opener, path])
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Could not open the file:\n{e}")
+    
+    
+    def _open_daily_summary_html(self):
+        path = os.path.abspath(f"{self.var_prefix.get().strip() or 'filtered_log_results'}_daily_summary.html")
+        if not os.path.exists(path):
+            messagebox.showinfo(APP_TITLE, "Run summary first to create the summary HTML file.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(path)  # Windows
+            else:
+                import subprocess, sys
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([opener, path])
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Could not open the file:\n{e}")
+
 
 
 def main():

@@ -361,6 +361,251 @@ def save_defaults(config_file: str, new_defaults: Dict[str, Any], profile: Optio
         json.dump(data, f, indent=4)
     print(f"Saved defaults to '{config_file}'")
 
+def _vehicle_from_content(filename: str, content: str) -> str:
+    """
+    Försök gissa fordonsnamn:
+
+    1) Från configfilen: Axlerod_BEV3_...
+    2) Annars från logfilens namn: Axlerod_20251118_T...
+    3) Faller tillbaka till 'Unknown' om inget hittas.
+    """
+
+    # 1) Plocka namn direkt ur Configuration file-raden
+    #    "Configuration file: Axlerod_BEV3_..."
+    m = re.search(r'Configuration file:\s*([^_\\/ \t]+)_', content)
+    if m:
+        return m.group(1)
+
+    # 2) Namn före _BEV3 om det finns i raden
+    m = re.search(r'\b([A-Za-z0-9]+)_BEV3', content)
+    if m:
+        return m.group(1)
+
+    # 3) Namn ur logfilens namn: "Axlerod_20251118_T123000.LOG"
+    base = os.path.basename(filename)
+    m = re.match(r'([A-Za-z0-9]+)_\d{8}_T', base)
+    if m:
+        return m.group(1)
+
+    return "Unknown"
+
+
+
+def write_vehicle_summary_html(
+    all_lines: List[Tuple[str, int, str]],
+    output_html: str,
+    serials_all: Iterable[str],
+    serials_with_logs: Iterable[str],
+) -> None:
+    """
+    Bygg en HTML-sammanfattning:
+    - Grupperat per fordonsnamn.
+    - Configuration file / Protocols samlade.
+    - Fordon med 'mismatch' hamnar överst.
+    - Serienummer utan utläsningar listas separat.
+    """
+    import html as _html
+
+    # Nytt: använd en normaliserad nyckel (lowercase), men spara ett display-namn
+    vehicles: Dict[str, Dict[str, Any]] = {}
+
+    for filename, line_no, content in all_lines:
+        veh_raw = _vehicle_from_content(filename, content) or "Unknown"
+        veh_key = veh_raw.strip().lower() or "unknown"
+
+        v = vehicles.setdefault(
+            veh_key,
+            {
+                "name_display": veh_raw,   # första varianten vi ser används som rubrik
+                "configs": set(),
+                "protocols": [],
+                "has_mismatch": False,
+            },
+        )
+
+        if "Configuration file:" in content:
+            part = content.split("Configuration file:", 1)[1].strip()
+            v["configs"].add(part)
+
+        if "Protocols:" in content:
+            part = content.split("Protocols:", 1)[1].strip()
+            v["protocols"].append(part)
+            if "mismatch" in part.lower():
+                v["has_mismatch"] = True
+
+    # Sortera: mismatch-fordon först, sedan alfabetiskt på display-namnet
+    sorted_vehicles = sorted(
+        vehicles.values(),
+        key=lambda data: (not data["has_mismatch"], data["name_display"].lower()),
+    )
+
+    serials_all = {s.strip() for s in serials_all if s and s.strip()}
+    serials_with_logs = {s.strip() for s in serials_with_logs if s and s.strip()}
+    serials_without_logs = sorted(serials_all - serials_with_logs)
+
+    with open(output_html, "w", encoding="utf-8") as out:
+        out.write("""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Daily Vehicle Summary</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  h1 { color: #333; }
+  h2 { margin-top: 1.5em; }
+  pre { background: #f5f5f5; padding: 0.5em; border-radius: 4px; }
+  .match { color: green; font-weight: bold; }
+  .mismatch { color: red; font-weight: bold; }
+  .configuration { color: #0066CC; font-weight: bold; }
+  .no-logs { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Daily Vehicle Summary</h1>
+""")
+
+        # Fordon / loggar
+        for data in sorted_vehicles:
+            veh_name = data["name_display"]
+            out.write(f"<h2>{_html.escape(veh_name)}</h2>\n")
+
+            # --- Config-block ---
+            if data["configs"]:
+                out.write("<pre>\n")
+                for cfg in sorted(data["configs"]):
+                    line = f"Configuration file: {cfg}"
+                    esc = _html.escape(line)
+                    esc = esc.replace(
+                        "Configuration file:",
+                        '<span class="configuration">Configuration file:</span>'
+                    )
+                    out.write(esc + "\n")
+                out.write("</pre>\n")
+
+            # --- Protocol-block ---
+            if data["protocols"]:
+                out.write("<pre>\n")
+                for prot in sorted(set(data["protocols"])):  # set = inga dubbletter
+                    line = f"Protocols: {prot}"
+                    esc = _html.escape(line)
+                    esc = re.sub(
+                        r"\bmismatch\b",
+                        '<span class="mismatch">mismatch</span>',
+                        esc,
+                        flags=re.IGNORECASE,
+                    )
+                    esc = re.sub(
+                        r"\bmatch\b",
+                        '<span class="match">match</span>',
+                        esc,
+                        flags=re.IGNORECASE,
+                    )
+                    out.write(esc + "\n")
+                out.write("</pre>\n\n")
+
+        # Serienummer utan utläsningar
+        if serials_without_logs:
+            out.write("<h2>Serials without readout logs</h2>\n<ul>\n")
+            for sn in serials_without_logs:
+                out.write(
+                    f'<li><span class="no-logs">{_html.escape(sn)}: '
+                    f'No readout logs found</span></li>\n'
+                )
+            out.write("</ul>\n")
+        out.write("</body>\n</html>")
+
+
+def run_daily_summary(
+    base_path: str,
+    serials: Iterable[str],
+    date_for: date,
+    include_zips: bool,
+    output_prefix: str,
+    keywords: List[str],
+    highlight_words: Optional[Dict[str, str]] = None,
+) -> None:
+    """
+    Kör en "daily summary":
+    - Sök igenom alla filer (LOG/ZIP) för alla angivna serienummer en viss dag.
+    - Filtrera med samma keywords som övriga skriptet.
+    - Bygg en fordonsöversikt + lista på serienummer utan loggar.
+    """
+    serials_list = [s.strip() for s in serials if s and s.strip()]
+    if not serials_list:
+        print("No serial numbers specified for daily summary.")
+        return
+
+    print(f"Running daily summary for date {date_for} and serials: {', '.join(serials_list)}")
+
+    # Hämta alla filer för dagen
+    log_files, zip_files = find_files_by_serial_and_date(
+        base_path=base_path,
+        serials=serials_list,
+        date_from=date_for,
+        date_to=date_for,
+        include_zips=include_zips,
+    )
+
+    print(f"Found {len(log_files)} LOG and {len(zip_files)} ZIP for daily summary.")
+    serials_with_logs: Set[str] = set()
+
+    # Ta reda på vilka serienummer som faktiskt hade filer
+    serial_folder_re = re.compile(
+        r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$",
+        re.IGNORECASE,
+    )
+
+    def _serial_from_path(path: str) -> Optional[str]:
+        p = Path(path)
+        for part in p.parts:
+            m = serial_folder_re.match(part)
+            if m:
+                return m.group("sn")
+        return None
+
+    patterns = compile_keyword_patterns(keywords)
+    all_lines: List[Tuple[str, int, str]] = []
+
+    # Vanliga LOG-filer
+    for log_path in log_files:
+        sn = _serial_from_path(log_path)
+        if sn:
+            serials_with_logs.add(sn)
+        lines = filter_log_file(log_path, patterns, highlight_words)
+        all_lines.extend(lines)
+
+    # ZIP-filer → extrahera och filtrera
+    temp_dir: Optional[str] = None
+    try:
+        if zip_files:
+            temp_dir = tempfile.mkdtemp()
+            print(f"Created temporary directory for ZIP extraction (daily summary): {temp_dir}")
+            for zp in zip_files:
+                print(f"Processing ZIP file (daily summary): {os.path.basename(zp)}")
+                extracted = extract_log_files_from_zip(zp, temp_dir)
+                for log in extracted:
+                    sn = _serial_from_path(log)
+                    if sn:
+                        serials_with_logs.add(sn)
+                    lines = filter_log_file(log, patterns, highlight_words)
+                    all_lines.extend(lines)
+    finally:
+        if temp_dir and os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Skriv HTML-sammanfattning
+    output_html = f"{output_prefix}_daily_summary.html"
+    write_vehicle_summary_html(
+        all_lines=all_lines,
+        output_html=output_html,
+        serials_all=serials_list,
+        serials_with_logs=serials_with_logs,
+    )
+
+    print(f"Daily summary saved to: {os.path.abspath(output_html)}")
+
+
+
 # ==========================================
 #  Processa valda filer (LOG + ZIP)
 # ==========================================

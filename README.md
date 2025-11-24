@@ -1,115 +1,107 @@
-LOG File Filtering GUI for Ipemotion / Scania VDA
+# LOG File Filtering GUI for Ipemotion / Scania VDA
 
-A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets.
+A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets — plus a **daily vehicle summary** view.
 
 ![alt text](image.png)
 
-✨ Features
-🔍 Smart Serial & Vehicle Detection
+## ✨ Features
 
-Automatically finds logger folders in the base path
+### 🔍 Smart Serial & Vehicle Detection
 
-Extracts vehicle name from the latest LOG/ZIP file
+- Automatically finds logger folders in the base path
+- Extracts vehicle name from the latest LOG/ZIP file
+- Shows entries as `Miguel (82902308)` for easy selection
+- Cached for instant startup
+- **Add all vehicles** button to quickly include every cached serial in one click
 
-Shows entries as Miguel (82902308) for easy selection
+### ⚡ Fast & Asynchronous
 
-Cached for instant startup
+- UI stays responsive during file scanning
+- Background updating of logger list
+- Manual **Refresh vehicle list** button
+- Cached serial/vehicle list is auto-refreshed in the background
 
-⚡ Fast & Asynchronous
+### 📄 Advanced Filtering
 
-UI stays responsive during file scanning
+- Search through LOG and ZIP files (per serial + date range)
+- Keyword filtering with highlight colors
+- Export to **HTML** and **TXT**
+- Status log with color-coded messages (Error / Warn / OK / Info)
 
-Background updating of logger list
+### 📊 Daily Vehicle Summary
 
-Manual Refresh vehicle list button
+Generate a compact summary for a single day across multiple vehicles:
 
-📄 Advanced Filtering
+- One section per vehicle name
+- Configuration line(s) at the top
+- Protocol lines grouped under the same vehicle
+- `mismatch` and `match` highlighted
+- Duplicated config/protocol lines are de-duplicated per vehicle
+- Extra list of **serials without readout logs** for that day
 
-Search through LOG and ZIP files
+The daily summary is saved as:
 
-Keyword filtering with highlight colors
+- `<output-prefix>_daily_summary.html`
 
-Export to HTML and TXT
+and opened from the GUI with **Open Summary report**.
 
-Status log with color-coded messages
-
-🛠 Configuration
+### 🛠 Configuration
 
 Uses a simple JSON config:
 
-log_filter_config.json
+- `log_filter_config.json`
 
+Contains:
 
-includes:
+- Keyword list
+- Highlight colors
+- Default base path
+- Default serial list
+- ZIP include toggle
+- Output filename prefix
+- Optional profiles/defaults support in the core logic
 
-keyword list
+### 🖥 GUI Overview
 
-highlight colors
+Main controls:
 
-default base path & serial number
+- **Base path (UNC)** – root folder with logger subfolders (e.g. `IPELOG_12345678`)
+- **Dropdown + serial textbox**
+  - Choose a vehicle/serial from the dropdown
+  - Or type/paste serials (comma or newline separated)
+  - **Add all vehicles** fills the textbox with all cached serials
+- **Date range**
+  - From / To date (or empty for “all dates”)
+- **Output-prefix**
+  - Base filename for all generated reports
+- **Include ZIP files**
+  - Toggle to process or skip `.ZIP` archives
 
-ZIP include toggle
+Buttons:
 
-output filename prefix
+- **Run filtering** – normal keyword filter; produces:
+  - `<prefix>.txt`
+  - `<prefix>.html`
+- **Open HTML results** – open `<prefix>.html`
+- **Open TXT results** – open `<prefix>.txt`
+- **Run summary** – daily vehicle summary for “today”; produces:
+  - `<prefix>_daily_summary.html`
+- **Open Summary report** – open `<prefix>_daily_summary.html`
+- **Reset to defaults** – reloads defaults from config
 
-🚀 Getting Started
-1. Install dependencies
+Live log:
+
+- Shows progress and messages in a color-coded list
+- Filter toggles for Error / Warn / OK / Info
+- **Clear log** button to reset the view
+
+## 🚀 Getting Started
+
+### 1. Install dependencies
+
+```bash
 pip install tkcalendar sv-ttk
 
+[### 2. Run the GUI]
 
-(Optional: venv recommended.)
-
-2. Run
-python logfilter_gui.py
-
-3. Set base path
-
-Select your UNC or local directory containing:
-
-IPELOG_12345678/
-    Miguel_20250101_T090848_..._LOG_1234.zip
-
-4. Select vehicle/serial
-
-Dropdown shows:
-✔ Vehicle name
-✔ Serial number
-
-5. Select date range, run filter
-
-Results saved as:
-
-filtered_log_results.txt
-filtered_log_results.html
-
-🧩 File Structure
-log_filter_config.json         # main config
-logfilter_serial_cache.json    # auto-generated cache
-logfilter_gui.py               # GUI
-logfilter_v2.py                # filter logic
-assets/                        # icons, screenshots
-
-📦 Releases
-
-Download the latest release:
-👉 https://github.com/JoakimAngare/LOG-file-GUI/releases
-
-🏷 Versioning
-
-This project uses Semantic Versioning.
-
-v1.1.0 → new features, backward compatible
-
-v1.0.x → patches/fixes
-
-v2.0.0 → breaking changes
-
-🐛 Reporting Issues
-
-Open an issue here:
-https://github.com/JoakimAngare/LOG-file-GUI/issues
-
-🤝 Contributing
-
-PRs welcome!
-Fork the repo and submit improvements any time.
+python logfilter_gui_v3.py

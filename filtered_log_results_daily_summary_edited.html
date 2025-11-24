@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Daily Vehicle Summary</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  h1 { color: #333; }
+  h2 { margin-top: 1.5em; }
+  pre { background: #f5f5f5; padding: 0.5em; border-radius: 4px; }
+  .match { color: green; font-weight: bold; }
+  .mismatch { color: red; font-weight: bold; }
+  .configuration { color: #0066CC; font-weight: bold; }
+  .no-logs { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Daily Vehicle Summary</h1>
+<h2>Axlerod</h2>
+<pre>
+<span class="configuration">Configuration file:</span> Axlerod_BEV3_P160pIntro1_SESAMM7_250714_TMS_78s8302f_78s9100_EMU_21s5601f_BMU_11s5300_MultiA2L_InternalModem_REDfix_24R22.rwf
+<span class="configuration">Configuration file:</span> Axlerod_BEV3_P160pIntro1_SESAMM7_251118_TMS_78s9100f_EMU_21s5202f_BMU_11s5300f_TW2541_DBC_24R22.rwf
+</pre>
+<pre>
+Protocols: CCP: EPK 250226 17:02:34 Type:ct  1Mbit Ver:11s5300f <span class="mismatch">mismatch</span> 250221 16:02:41 Type:ct  1Mbit Ver:11s5300f of UnnamedECU on CAN10_BSU8_CCP
+Protocols: CCP: EPK 250226 17:02:34 Type:ct  1Mbit Ver:11s5300f <span class="mismatch">mismatch</span> 250221 16:02:41 Type:ct  1Mbit Ver:11s5300f of UnnamedECU on CAN11_BSU7_CCP
+Protocols: CCP: EPK 250226 17:02:34 Type:ct  1Mbit Ver:11s5300f <span class="mismatch">mismatch</span> 250221 16:02:41 Type:ct  1Mbit Ver:11s5300f of UnnamedECU on CAN12_BMU_CCP
+Protocols: CCP: EPK 250226 17:02:34 Type:ct  1Mbit Ver:11s5300f <span class="mismatch">mismatch</span> 250221 16:02:41 Type:ct  1Mbit Ver:11s5300f of UnnamedECU on CAN2_BSU1_CCP
+Protocols: CCP: EPK 250226 17:02:34 Type:ct  1Mbit Ver:11s5300f <span class="mismatch">mismatch</span> 250221 16:02:41 Type:ct  1Mbit Ver:11s5300f of UnnamedECU on CAN3_BSU9_CCP
+Protocols: CCP: EPK 250401 10:04:03 Type:ct  1Mbit Ver:21s5202f <span class="match">match</span> 250401 10:04:03 Type:ct  1Mbit Ver:21s5202f of UnnamedECU on CAN4_EMU_CCP
+</pre>
+
+
+<h2>Foltest</h2>
+<pre>
+<span class="configuration">Configuration file:</span> Foltest_BEV3_LP_CCD_SESAMM7_251105_TMS_79s8503RC_EMU_21s4900f_BMU_11s5502f_IPEcloudON_24R22.rwf
+</pre>
+<pre>
+Protocols: CCP: EPK 241120 17:11:42 Type:ct  1Mbit Ver:21s4900f <span class="match">match</span> 241120 17:11:42 Type:ct  1Mbit Ver:21s4900f of UnnamedECU on CAN4_EMU_CCP
+Protocols: CCP: EPK 241126 09:11:12 Type:ct  1Mbit Ver:zuua <span class="match">match</span> 241126 09:11:12 Type:ct  1Mbit Ver:zuua of UnnamedECU on CAN9_TMS_CCP
+Protocols: CCP: EPK 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f <span class="match">match</span> 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f of UnnamedECU on CAN10_BSU8_CCP
+Protocols: CCP: EPK 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f <span class="match">match</span> 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f of UnnamedECU on CAN12_BMU_CCP
+Protocols: CCP: EPK 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f <span class="match">match</span> 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f of UnnamedECU on CAN2_BSU1_CCP
+Protocols: CCP: EPK 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f <span class="match">match</span> 250611 21:06:58 Type:ct  1Mbit Ver:11s5502f of UnnamedECU on CAN3_BSU9_CCP
+</pre>
+
+<h2>Serials without readout logs</h2>
+<ul>
+<li><span class="no-logs">82902552: No readout logs found</span></li>
+<li><span class="no-logs">82902554: No readout logs found</span></li>
+</ul>
+</body>
+</html>
