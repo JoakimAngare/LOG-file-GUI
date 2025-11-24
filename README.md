@@ -2,7 +2,19 @@
 
 A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets — plus a **daily vehicle summary** view.
 
-![alt text](image.png)
+## 🚀 Getting Started
+
+### 1. Install dependencies
+
+```bash
+pip install tkcalendar sv-ttk'
+```
+
+### 2. Run the GUI
+
+```bash
+python logfilter_gui_v3.py
+```
 
 ## ✨ Features
 
@@ -100,8 +112,10 @@ Live log:
 ### 1. Install dependencies
 
 ```bash
-pip install tkcalendar sv-ttk
+pip install tkcalendar sv-ttk'
+```
 
-[### 2. Run the GUI]
+### 2. Run the GUI
 
+```bash
 python logfilter_gui_v3.py
