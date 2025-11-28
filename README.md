@@ -1,6 +1,6 @@
 # LOG File Filtering GUI for Ipemotion / Scania VDA
 
-A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets — plus a **daily vehicle summary** view.
+A fast, user-friendly tool for filtering large Ipemotion LOG files by serial number, vehicle name, date range, and keyword sets — plus a **vehicle summary** view.
 
 ## 🚀 Getting Started
 
@@ -40,20 +40,21 @@ python logfilter_gui_v3.py
 - Export to **HTML** and **TXT**
 - Status log with color-coded messages (Error / Warn / OK / Info)
 
-### 📊 Daily Vehicle Summary
+### 📊 Vehicle Summary
 
-Generate a compact summary for a single day across multiple vehicles:
+Generate a compact summary across multiple vehicles:
 
 - One section per vehicle name
-- Configuration line(s) at the top
+- Latest MEA file at the top
+- Configuration line(s) 
 - Protocol lines grouped under the same vehicle
 - `mismatch` and `match` highlighted
 - Duplicated config/protocol lines are de-duplicated per vehicle
-- Extra list of **serials without readout logs** for that day
+- Extra list of **serials without readout logs** for that search
 
-The daily summary is saved as:
+The summary report is saved as:
 
-- `<output-prefix>_daily_summary.html`
+- `<output-prefix>_summary.html`
 
 and opened from the GUI with **Open Summary report**.
 
@@ -96,9 +97,9 @@ Buttons:
   - `<prefix>.html`
 - **Open HTML results** – open `<prefix>.html`
 - **Open TXT results** – open `<prefix>.txt`
-- **Run summary** – daily vehicle summary for “today”; produces:
-  - `<prefix>_daily_summary.html`
-- **Open Summary report** – open `<prefix>_daily_summary.html`
+- **Run summary** – vehicle summary for “today”; produces:
+  - `<prefix>_summary.html`
+- **Open Summary report** – open `<prefix>_summary.html`
 - **Reset to defaults** – reloads defaults from config
 
 Live log:

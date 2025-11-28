@@ -3,6 +3,22 @@
 ```markdown
 # Changelog
 
+## [1.3.0] - 2025-11-27
+### Added
+- Functionality for filtering M-log MEA.LOG files by changing base path via **browse...** to ...MLog\Data\sss\FT
+- Reworked Summary function to instead of just having `Daily summary` it will now apply to the calender setting `from date` `to date` function to enable summary from past week for example
+- In the **Summary html** you will now also see latest available MEA.LOG file for each individual vehicle.
+
+### Improved
+- New font for GUI **Cascadia Code**
+- New widget frame size 
+- Renamed `serials without readout log` to `No LOG files found`
+
+### Fixed
+- Some duplicate naming issues in Summary report
+- minor bug fixes
+
+
 ## [1.2.0] - 2025-11-24
 
 ### Added

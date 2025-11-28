@@ -55,7 +55,15 @@ class App(ttk.Frame):
         super().__init__(master, padding=10)
         master.title(APP_TITLE)
         master.geometry("860x640")
-        master.minsize(760, 520)
+        master.minsize(950, 520)
+
+        # === Global ttk-font för hela appen ===
+        style = ttk.Style(self)
+        default_font = ("Cascadia Code", 12,)
+        style.configure(".", font=default_font)
+        for stylename in ("TLabel", "TButton", "TCheckbutton",
+                          "TRadiobutton", "TEntry", "TCombobox"):
+            style.configure(stylename, font=default_font)
 
         # Load defaults from config
         self.config_path = lf.DEFAULT_CONFIG
@@ -94,101 +102,164 @@ class App(ttk.Frame):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if data.get("base") != base:
-                return [], {}
-            items = data.get("items") or []
-            mapping = data.get("mapping") or {}
-            # Ensure mapping only has keys from items
-            mapping = {k: mapping.get(k, k) for k in items}
-            return items, mapping
         except Exception:
             return [], {}
 
+        # Nytt multi-base-format:
+        # {
+        #   "bases": {
+        #       "<base1>": {"items": [...], "mapping": {...}},
+        #       "<base2>": {"items": [...], "mapping": {...}}
+        #   }
+        # }
+        if isinstance(data, dict) and "bases" in data:
+            base_data = data["bases"].get(base)
+            if not base_data:
+                return [], {}
+            items = base_data.get("items") or []
+            mapping = base_data.get("mapping") or {}
+            # Ensure mapping only has keys from items
+            mapping = {k: mapping.get(k, k) for k in items}
+            return items, mapping
+
+        # Bakåtkompatibelt: gammalt format ("base", "items", "mapping")
+        if data.get("base") != base:
+            return [], {}
+        items = data.get("items") or []
+        mapping = data.get("mapping") or {}
+        mapping = {k: mapping.get(k, k) for k in items}
+        return items, mapping
+    
     def _save_serial_cache(self, base: str, items, mapping):
-        """Save serial/vehicle list to cache."""
+        """Save serial/vehicle list to cache (separate per base path)."""
         path = self._serial_cache_path()
         try:
-            data = {
-                "base": base,
+            # Försök läsa befintlig fil så vi kan uppdatera, inte skriva över allt
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+
+            # Migrera ev. gammalt format -> nytt "bases"-format
+            if "bases" not in data:
+                if data.get("base") and isinstance(data.get("items"), list):
+                    old_base = data.get("base")
+                    old_items = data.get("items") or []
+                    old_mapping = data.get("mapping") or {}
+                    data = {
+                        "bases": {
+                            old_base: {
+                                "items": old_items,
+                                "mapping": old_mapping,
+                            }
+                        }
+                    }
+                else:
+                    data = {"bases": {}}
+
+            # Spara/uppdatera just denna base
+            data["bases"][base] = {
                 "items": list(items),
                 "mapping": mapping,
             }
+
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
-            # Cache errors should never break the app
+            # Cache-errors ska aldrig krascha appen
             pass
+
 
     
     def _update_serial_list(self, base: str):
         """Compute serial dropdown contents for a given base path.
 
         Returns (display_items, mapping) where:
-        - display_items: list of labels, e.g. ['Miguel (82902308)', '12345678', ...]
-        - mapping: {label -> serial_number}
+        - display_items: list of labels, e.g. ['Miguel (82902308)', 'VISKAN', ...]
+        - mapping: {label -> serial_or_vehicle_name}
         """
         display_items = []
         mapping = {}
 
         if base and os.path.isdir(base):
             try:
-                # Same pattern as in logfilter_v2.find_files_by_serial_and_date
+                # Läs alla undermappar direkt under base
+                entries = [e for e in os.scandir(base) if e.is_dir()]
+
+                # Samma pattern som i logfilter_v2.find_files_by_serial_and_date
                 serial_folder_re = re.compile(
                     r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$",
                     re.IGNORECASE,
                 )
 
-                for entry in os.scandir(base):
-                    if not entry.is_dir():
-                        continue
-                    m = serial_folder_re.match(entry.name)
-                    if not m:
-                        continue
+                # Finns det logger-mappar? → gammal struktur
+                has_serial_folders = any(
+                    serial_folder_re.match(e.name) for e in entries
+                )
 
-                    sn = m.group("sn")
+                if has_serial_folders:
+                    # ===== Gammal struktur: ipelog2_8290xxxx =====
+                    for entry in entries:
+                        m = serial_folder_re.match(entry.name)
+                        if not m:
+                            continue
 
-                    # Find latest file (ZIP/LOG) in this logger folder
-                    latest_date = None
-                    latest_name = None  # vehicle name candidate
+                        sn = m.group("sn")
 
-                    for root, dirs, files in os.walk(entry.path):
-                        for fname in files:
-                            upper = fname.upper()
-                            if not (upper.endswith(".LOG") or upper.endswith(".ZIP")):
-                                continue
-                            fpath = os.path.join(root, fname)
+                        # Hitta senaste filen (ZIP/LOG) i denna logger-mapp
+                        latest_date = None
+                        latest_name = None  # vehicle name-kandidat
 
-                            # Use same date logic as backend
-                            try:
-                                start_date, end_date = lf._file_date_window(fpath)
-                                file_date = end_date or start_date
-                            except Exception:
-                                file_date = None
+                        for root, dirs, files in os.walk(entry.path):
+                            for fname in files:
+                                upper = fname.upper()
+                                if not (upper.endswith(".LOG") or upper.endswith(".ZIP")):
+                                    continue
+                                fpath = os.path.join(root, fname)
 
-                            # Extract vehicle name from filename: prefix before first "_"
-                            veh = None
-                            base_fname = os.path.basename(fname)
-                            mname = re.match(r"([^_]+)_", base_fname)
-                            if mname:
-                                veh = mname.group(1)
+                                # Samma datumlogik som i backend
+                                try:
+                                    start_date, end_date = lf._file_date_window(fpath)
+                                    file_date = end_date or start_date
+                                except Exception:
+                                    file_date = None
 
-                            # Decide if this is the newest file we've seen
-                            if file_date is not None:
-                                if latest_date is None or file_date > latest_date:
-                                    latest_date = file_date
+                                # Försök plocka ut vehicle name ur filnamn: prefix före första "_"
+                                veh = None
+                                base_fname = os.path.basename(fname)
+                                mname = re.match(r"([^_]+)_", base_fname)
+                                if mname:
+                                    veh = mname.group(1)
+
+                                # Är detta den senaste filen?
+                                if file_date is not None:
+                                    if latest_date is None or file_date > latest_date:
+                                        latest_date = file_date
+                                        latest_name = veh
+                                elif latest_name is None and veh:
+                                    # Ingen datuminfo men vi kan åtminstone få ett namn
                                     latest_name = veh
-                            elif latest_date is None and veh:
-                                # fallback: if we have no date yet, at least take a name
-                                latest_name = veh
 
-                    # Build display text
-                    if latest_name:
-                        label = f"{latest_name} ({sn})"
-                    else:
-                        label = sn
+                        # Bygg label
+                        if latest_name:
+                            label = f"{latest_name} ({sn})"
+                        else:
+                            label = sn
 
-                    mapping[label] = sn
-                    display_items.append(label)
+                        mapping[label] = sn
+                        display_items.append(label)
+
+                else:
+                    # ===== Ny FT-struktur: fordonsnamn som mappar (VISKAN, TORNE, ...) =====
+                    for entry in entries:
+                        veh_name = entry.name.strip()
+                        if not veh_name:
+                            continue
+                        label = veh_name
+                        # Här är "värdet" lika med fordonsnamnet, t.ex. "VISKAN"
+                        mapping[label] = veh_name
+                        display_items.append(label)
 
             except Exception as e:
                 self._append_log(f"Could not scan serial folders: {e}\n")
@@ -398,17 +469,18 @@ class App(ttk.Frame):
         self.var_zip = tk.BooleanVar(value=True)
         ttk.Checkbutton(self, text="Include ZIP files", variable=self.var_zip).grid(row=row, column=1, sticky="w", pady=(6,0))
 
-        # Buttons
+        # Buttonspython
         row += 1
         btn_frame = ttk.Frame(self)
-        btn_frame.grid(row=row, column=0, columnspan=2, sticky="e", pady=(16,0))
+        btn_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(16,0))
         self.btn_run = ttk.Button(btn_frame, text="Run filtering", command=self._on_run)
         self.btn_run.grid(row=0, column=0)
         ttk.Button(btn_frame, text="Open HTML results", command=self._open_html).grid(row=0, column=1, padx=(8,0))
         # Button to open TXT results
         ttk.Button(btn_frame, text="Open TXT results", command=self._open_txt).grid(row=0, column=2, padx=(8,0))
-        # Button run summary 
-        ttk.Button(btn_frame, text="Run summary", command=self._on_run_daily_summary).grid(row=0, column=3, padx=(8,0))
+        # Button run summary (använder From/To date)
+        ttk.Button(btn_frame, text="Run Summary", command=self._on_run_summary).grid(row=0, column=3, padx=(8,0))
+
         # Open summary report button
         ttk.Button(btn_frame, text="Open Summary report", command=self._open_daily_summary_html).grid(row=0, column=4, padx=(8,0))
         # Reset to defaults button
@@ -540,12 +612,10 @@ class App(ttk.Frame):
         self._append_log(info)
         t.start()
 
-    def _on_run_daily_summary(self):
+    def _on_run_summary(self):
         """
-        Kör en dags-sammanfattning:
-        - Alla serienummer i text-rutan.
-        - Datum = idag.
-        - Skapar <prefix>_daily_summary.html.
+        Kör sammanfattning för valt datumspann (From/To i GUI:t).
+        Skapar <prefix>_summary.html (samma filnamn som tidigare).
         """
         base_path, serials, date_from, date_to, include_zips, prefix = self._collect_inputs()
         if not base_path:
@@ -555,12 +625,13 @@ class App(ttk.Frame):
             messagebox.showwarning(APP_TITLE, "Enter at least one serial number.")
             return
 
-        today = _dt.date.today()
-        daily_prefix = prefix or "daily_summary"
+        # Vi tillåter att date_from/date_to är None ⇒ “öppet” intervall,
+        # men typiskt har du båda satta via kalendern.
+        summary_prefix = prefix or "daily_summary"
 
         t = threading.Thread(
-            target=self._run_daily_task,
-            args=(base_path, serials, include_zips, daily_prefix, today),
+            target=self._run_summary_task,
+            args=(base_path, serials, date_from, date_to, include_zips, summary_prefix),
             daemon=True,
         )
         self._set_busy(True)
@@ -568,9 +639,9 @@ class App(ttk.Frame):
             "\n=== Starting SUMMARY ===\n"
             f"Base path: {base_path}\n"
             f"Serial numbers: {', '.join(serials)}\n"
-            f"Date: {today}\n"
+            f"Date range: {(date_from or '-') } to {(date_to or '-') }\n"
             f"Include ZIP: {include_zips}\n"
-            f"Output prefix: {daily_prefix}\n"
+            f"Output prefix: {summary_prefix}\n"
         )
         self._append_log(info)
         t.start()
@@ -643,7 +714,7 @@ class App(ttk.Frame):
         finally:
             self._set_busy(False)
 
-    def _run_daily_task(self, base_path, serials, include_zips, prefix, date_for):
+    def _run_summary_task(self, base_path, serials, date_from, date_to, include_zips, prefix):
         class _QueueWriter:
             def __init__(self, q): self.q = q
             def write(self, s):
@@ -655,22 +726,32 @@ class App(ttk.Frame):
         try:
             with contextlib.redirect_stdout(qw), contextlib.redirect_stderr(qw):
                 print("Running summary…")
-                lf.run_daily_summary(
+                if date_from and date_to:
+                    page_title = f"Vehicle Summary {date_from} – {date_to}"
+                elif date_from:
+                    page_title = f"Vehicle Summary from {date_from}"
+                elif date_to:
+                    page_title = f"Vehicle Summary until {date_to}"
+                else:
+                    page_title = "Vehicle Summary"
+                lf.run_summary_range(
                     base_path=base_path,
                     serials=serials,
-                    date_for=date_for,
+                    date_from=date_from,
+                    date_to=date_to,
                     include_zips=include_zips,
                     output_prefix=prefix,
                     keywords=self.keywords,
                     highlight_words=self.highlight_words,
+                    page_title=page_title,
                 )
-                html_path = os.path.abspath(f"{prefix}_daily_summary.html")
+                html_path = os.path.abspath(f"{prefix}_summary.html")
                 msg = f"summary completed.\nHTML: {html_path}"
                 print(msg)
                 self._notify(msg)
         except Exception as e:
-            print(f"Error in summary: {e}")
-            self._notify(f"Error: {e}")
+            print(f"Summary error (ignored): {e}")
+            self._append_log(f"\n[Summary warning] {e}\n")
         finally:
             self._set_busy(False)
 
@@ -715,7 +796,11 @@ class App(ttk.Frame):
     def _scroll_to_end(self):
         kids = self.log_tree.get_children("")
         if kids:
-            self.log_tree.see(kids[-1])
+            try:
+                self.log_tree.see(kids[-1])
+            except Exception:
+                # Ignorera "Item ... not found"-fel från Treeview
+                pass
 
     def _trim_entries(self):
         if len(self._log_entries) > MAX_LOG_ROWS:
@@ -774,7 +859,7 @@ class App(ttk.Frame):
     
     
     def _open_daily_summary_html(self):
-        path = os.path.abspath(f"{self.var_prefix.get().strip() or 'filtered_log_results'}_daily_summary.html")
+        path = os.path.abspath(f"{self.var_prefix.get().strip() or 'filtered_log_results'}_summary.html")
         if not os.path.exists(path):
             messagebox.showinfo(APP_TITLE, "Run summary first to create the summary HTML file.")
             return
@@ -792,6 +877,7 @@ class App(ttk.Frame):
 
 def main():
     root = tk.Tk()
+
     try:
         root.call("tk", "scaling", 1.2)
     except Exception:

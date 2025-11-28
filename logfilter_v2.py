@@ -7,7 +7,9 @@ import tempfile
 import shutil
 from pathlib import Path
 from datetime import datetime, date
-from typing import Iterable, List, Tuple, Dict, Optional, Set, Any
+from typing import Collection, Iterable, List, Tuple, Dict, Optional, Set, Any, Mapping
+from collections import defaultdict
+
 
 # =============================
 #  Färger för terminalutskrift
@@ -24,27 +26,55 @@ class Colors:
 # =============================
 _DATE_IN_NAME = re.compile(r"_(\d{8})_T\d{6}")
 
+# Nytt: datumformat för FT-filer, t.ex. 2025-11-25_08_05_36_MEA_4711.ZIP
+_DATE_FT_IN_NAME = re.compile(r"(\d{4}-\d{2}-\d{2})_\d{2}_\d{2}_\d{2}")
+
+
 
 def _parse_date_yyyy_mm_dd(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
 def _dates_from_filename(path: str) -> List[date]:
-    """Plocka ut alla YYYYMMDD från fil- eller katalognamn enligt _20250101_T123000-mönster."""
+    """Plocka ut datum ur fil-/katalognamn.
+
+    Stöd:
+    - Gammalt mönster: _20250101_T123000  (YYYYMMDD_T...)
+    - FT-mönster:      2025-11-25_08_05_36_MEA_4711.ZIP  (YYYY-MM-DD_HH_MM_SS_...)
+    """
     dates: List[date] = []
-    for m in _DATE_IN_NAME.finditer(os.path.basename(path)):
+    basename = os.path.basename(path)
+
+    # 1) Gammalt mönster: _20250101_T123000
+    for m in _DATE_IN_NAME.finditer(basename):
         try:
             dates.append(datetime.strptime(m.group(1), "%Y%m%d").date())
         except Exception:
             pass
-    # Om inget fanns i filnamnet, prova hela sökvägen (ibland ligger datum i mappnamn)
-    if not dates:
-        for part in Path(path).parts:
-            for m in _DATE_IN_NAME.finditer(part):
-                try:
-                    dates.append(datetime.strptime(m.group(1), "%Y%m%d").date())
-                except Exception:
-                    pass
+
+    # 2) FT-mönster: 2025-11-25_08_05_36_...
+    for m in _DATE_FT_IN_NAME.finditer(basename):
+        try:
+            dates.append(datetime.strptime(m.group(1), "%Y-%m-%d").date())
+        except Exception:
+            pass
+
+    if dates:
+        return dates
+
+    # 3) Om inget fanns i filnamnet, prova hela sökvägen (ibland ligger datum i mappnamn)
+    for part in Path(path).parts:
+        for m in _DATE_IN_NAME.finditer(part):
+            try:
+                dates.append(datetime.strptime(m.group(1), "%Y%m%d").date())
+            except Exception:
+                pass
+        for m in _DATE_FT_IN_NAME.finditer(part):
+            try:
+                dates.append(datetime.strptime(m.group(1), "%Y-%m-%d").date())
+            except Exception:
+                pass
+
     return dates
 
 
@@ -127,51 +157,112 @@ def find_files_by_serial_and_date(base_path: str,
                                   date_to: Optional[date],
                                   include_zips: bool = True) -> Tuple[List[str], List[str]]:
     """
-    Gå igenom "base_path" där varje logger har en egen mapp, t.ex.
-    ipelog2_82902308, och samla ihop .LOG- och (valfritt) .ZIP-filer
+    Gå igenom "base_path" och samla ihop .LOG- och (valfritt) .ZIP-filer
     vars datum överlappar det angivna intervallet.
+
+    Stöder två typer av struktur:
+
+    1) "Gammal" logger-struktur:
+       base_path/
+         ipelog2_82902308/
+           ... .LOG/.ZIP ...
+
+       → Då tolkas 'serials' som serienummer (82902308 osv) och vi tittar
+         bara i ipelog*/logger-mappar som matchar dessa nummer.
+
+    2) "Ny" fordonsnamns-struktur (t.ex. FT):
+       base_path/
+         VISKAN/
+           2025-11-25_08_05_36_MEA_4711.ZIP
+         TORNE/
+           2025-11-23_16_01_37_MEA_4461.ZIP
+
+       → Då tolkas 'serials' som fordonsnamn (VISKAN, TORNE, ...),
+         och vi söker i just de fordonsmapparna.
     """
     serials_set: Set[str] = {s.strip() for s in serials if s and s.strip()}
     if not serials_set:
-        raise ValueError("Minst ett serienummer krävs.")
+        raise ValueError("Minst ett serienummer/fordonsnamn krävs.")
 
-    # Prefix som förekommer i dina mappar
-    serial_folder_re = re.compile(r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$", re.IGNORECASE)
+    # För jämförelse i fordonsnamnsläget (case-insensitive)
+    serials_upper: Set[str] = {s.upper() for s in serials_set}
+
+    # Prefix som förekommer i dina logger-mappar (gammal struktur)
+    serial_folder_re = re.compile(
+        r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$",
+        re.IGNORECASE,
+    )
 
     # Datumintervall
-    wanted_window = (date_from if date_from else date.min,
-                     date_to if date_to else date.max)
+    wanted_window = (
+        date_from if date_from else date.min,
+        date_to if date_to else date.max,
+    )
 
     log_files: List[str] = []
     zip_files: List[str] = []
 
-    # Besök endast de mappar som matchar serienummer
+    # Försök läsa alla undermappar i base_path
     try:
-        for entry in os.scandir(base_path):
-            if not entry.is_dir():
-                continue
-            m = serial_folder_re.match(entry.name)
-            if not m:
-                continue
-            sn = m.group('sn')
-            if sn not in serials_set:
-                continue
-
-            # Gå rekursivt i just denna SN-mapp
-            for root, dirs, files in os.walk(entry.path):
-                for fname in files:
-                    upper = fname.upper()
-                    if not (upper.endswith('.LOG') or (include_zips and upper.endswith('.ZIP'))):
-                        continue
-                    fpath = os.path.join(root, fname)
-                    file_window = _file_date_window(fpath)
-                    if _overlaps(file_window, wanted_window):
-                        if upper.endswith('.LOG'):
-                            log_files.append(fpath)
-                        else:
-                            zip_files.append(fpath)
+        entries = [entry for entry in os.scandir(base_path) if entry.is_dir()]
     except FileNotFoundError:
         print(f"Error: Hittar inte basvägen: {base_path}")
+        return log_files, zip_files
+
+    # Kolla om vi har ipelog*/logger-mappar → gammal struktur
+    has_serial_folders = any(serial_folder_re.match(e.name) for e in entries)
+
+    try:
+        if has_serial_folders:
+            # ===== Läget: gammal struktur (ipelog2_8290xxxx) =====
+            for entry in entries:
+                m = serial_folder_re.match(entry.name)
+                if not m:
+                    continue
+                sn = m.group("sn")
+                if sn not in serials_set:
+                    continue
+
+                # Gå rekursivt i just denna SN-mapp
+                for root, dirs, files in os.walk(entry.path):
+                    for fname in files:
+                        upper = fname.upper()
+                        if not (upper.endswith(".LOG") or (include_zips and upper.endswith(".ZIP"))):
+                            continue
+                        fpath = os.path.join(root, fname)
+                        file_window = _file_date_window(fpath)
+                        if _overlaps(file_window, wanted_window):
+                            if upper.endswith(".LOG"):
+                                log_files.append(fpath)
+                            else:
+                                zip_files.append(fpath)
+        else:
+            # ===== Läget: fordonsnamn som mappar (VISKAN, TORNE, ...) =====
+            for entry in entries:
+                veh_name = entry.name.strip()
+                if not veh_name:
+                    continue
+
+                # Matcha mappnamn mot angivna "serials" (dvs fordonsnamn) – case-insensitive
+                if veh_name.upper() not in serials_upper:
+                    continue
+
+                # Gå rekursivt i denna fordonsmapp
+                for root, dirs, files in os.walk(entry.path):
+                    for fname in files:
+                        upper = fname.upper()
+                        if not (upper.endswith(".LOG") or (include_zips and upper.endswith(".ZIP"))):
+                            continue
+                        fpath = os.path.join(root, fname)
+                        file_window = _file_date_window(fpath)
+                        if _overlaps(file_window, wanted_window):
+                            if upper.endswith(".LOG"):
+                                log_files.append(fpath)
+                            else:
+                                zip_files.append(fpath)
+    except FileNotFoundError:
+        print(f"Error: Hittar inte basvägen: {base_path}")
+
     return log_files, zip_files
 
 # ==========================================
@@ -396,6 +487,8 @@ def write_vehicle_summary_html(
     output_html: str,
     serials_all: Iterable[str],
     serials_with_logs: Iterable[str],
+    page_title: str = "Daily Vehicle Summary",
+    no_logs_heading: str = "Vehicles has no LOG files from today",
 ) -> None:
     """
     Bygg en HTML-sammanfattning:
@@ -406,31 +499,57 @@ def write_vehicle_summary_html(
     """
     import html as _html
 
+    # === Först: bygg file -> vehicle-karta från configraderna ===
+    file_to_vehicle: Dict[str, str] = {}
+    for filename, line_no, content in all_lines:
+        if "Configuration file:" in content:
+            veh = _vehicle_from_content(filename, content)
+            if veh and veh != "Unknown":
+                file_to_vehicle[filename] = veh
+
     # Nytt: använd en normaliserad nyckel (lowercase), men spara ett display-namn
     vehicles: Dict[str, Dict[str, Any]] = {}
 
     for filename, line_no, content in all_lines:
         veh_raw = _vehicle_from_content(filename, content) or "Unknown"
-        veh_key = veh_raw.strip().lower() or "unknown"
+
+        # Om Unknown: försök ta fordonet från filens config-mappning
+        if (not veh_raw or veh_raw == "Unknown") and filename in file_to_vehicle:
+            veh_raw = file_to_vehicle[filename]
+
+        veh_key = (veh_raw or "Unknown").strip().lower() or "unknown"
 
         v = vehicles.setdefault(
             veh_key,
             {
-                "name_display": veh_raw,   # första varianten vi ser används som rubrik
+                "name_display": veh_raw,
                 "configs": set(),
                 "protocols": [],
                 "has_mismatch": False,
+                "sources": set(),
             },
         )
+
+        # Lägg alltid till filnamnet som källa
+        v["sources"].add(filename)
 
         if "Configuration file:" in content:
             part = content.split("Configuration file:", 1)[1].strip()
             v["configs"].add(part)
 
+        # IpemotionRT: redan "Protocols:"
         if "Protocols:" in content:
             part = content.split("Protocols:", 1)[1].strip()
             v["protocols"].append(part)
             if "mismatch" in part.lower():
+                v["has_mismatch"] = True
+
+        # FT: behandla "CCP: EPK ..." som protokollrad
+        elif "CCP: EPK" in content:
+            part = content.split("CCP: EPK", 1)[1].strip()
+            prot = "CCP: EPK " + part if part else "CCP: EPK"
+            v["protocols"].append(prot)
+            if "mismatch" in prot.lower():
                 v["has_mismatch"] = True
 
     # Sortera: mismatch-fordon först, sedan alfabetiskt på display-namnet
@@ -439,35 +558,50 @@ def write_vehicle_summary_html(
         key=lambda data: (not data["has_mismatch"], data["name_display"].lower()),
     )
 
-    serials_all = {s.strip() for s in serials_all if s and s.strip()}
-    serials_with_logs = {s.strip() for s in serials_with_logs if s and s.strip()}
-    serials_without_logs = sorted(serials_all - serials_with_logs)
+    # Case-insensitive jämförelse mellan GUI-namn och hittade ID:n
+    serials_all_clean = [s.strip() for s in serials_all if s and s.strip()]
+    serials_with_clean = [s.strip() for s in serials_with_logs if s and s.strip()]
+
+    with_lower = {s.lower() for s in serials_with_clean}
+
+    serials_without_logs = sorted(
+        {s for s in serials_all_clean if s.lower() not in with_lower},
+        key=lambda x: x.lower(),
+    )
 
     with open(output_html, "w", encoding="utf-8") as out:
-        out.write("""<!DOCTYPE html>
+        out.write(f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Daily Vehicle Summary</title>
+<title>{_html.escape(page_title)}</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 20px; }
-  h1 { color: #333; }
-  h2 { margin-top: 1.5em; }
-  pre { background: #f5f5f5; padding: 0.5em; border-radius: 4px; }
-  .match { color: green; font-weight: bold; }
-  .mismatch { color: red; font-weight: bold; }
-  .configuration { color: #0066CC; font-weight: bold; }
-  .no-logs { color: #888; font-style: italic; }
+  body {{ font-family: Arial, sans-serif; margin: 20px; }}
+  h1 {{ color: #333; }}
+  h2 {{ margin-top: 1.5em; }}
+  pre {{ background: #f5f5f5; padding: 0.5em; border-radius: 4px; }}
+  .match {{ color: green; font-weight: bold; }}
+  .mismatch {{ color: red; font-weight: bold; }}
+  .configuration {{ color: #0066CC; font-weight: bold; }}
+  .no-logs {{ color: #888; font-style: italic; }}
 </style>
 </head>
 <body>
-<h1>Daily Vehicle Summary</h1>
+<h1>{_html.escape(page_title)}</h1>
 """)
 
         # Fordon / loggar
         for data in sorted_vehicles:
             veh_name = data["name_display"]
             out.write(f"<h2>{_html.escape(veh_name)}</h2>\n")
+
+            # Filkällor direkt under rubriken (basnamn på LOG/ZIP)
+            sources = data.get("sources")
+            if sources:
+                # visa bara basnamnet, inte hela sökvägen
+                basenames = {os.path.basename(s) for s in sources}
+                latest_name = max(basenames)  # t.ex. Axlerod_20251127_T110842_...LOG
+                out.write(_html.escape(latest_name) + "<br>\n")
 
             # --- Config-block ---
             if data["configs"]:
@@ -505,55 +639,62 @@ def write_vehicle_summary_html(
 
         # Serienummer utan utläsningar
         if serials_without_logs:
-            out.write("<h2>Serials without readout logs</h2>\n<ul>\n")
+            out.write(f"<h2>{_html.escape(no_logs_heading)}</h2>\n<ul>\n")
             for sn in serials_without_logs:
                 out.write(
                     f'<li><span class="no-logs">{_html.escape(sn)}: '
-                    f'No readout logs found</span></li>\n'
+                    f'No LOG files found</span></li>\n'
                 )
             out.write("</ul>\n")
         out.write("</body>\n</html>")
 
 
-def run_daily_summary(
+def run_summary_range(
     base_path: str,
     serials: Iterable[str],
-    date_for: date,
+    date_from: Optional[date],
+    date_to: Optional[date],
     include_zips: bool,
     output_prefix: str,
     keywords: List[str],
     highlight_words: Optional[Dict[str, str]] = None,
+    page_title: str = "Vehicle Summary",
 ) -> None:
     """
-    Kör en "daily summary":
-    - Sök igenom alla filer (LOG/ZIP) för alla angivna serienummer en viss dag.
-    - Filtrera med samma keywords som övriga skriptet.
-    - Bygg en fordonsöversikt + lista på serienummer utan loggar.
+    Kör sammanfattning över valfritt datumspann (date_from–date_to).
+    Skapar <prefix>_daily_summary.html med samma layout som tidigare,
+    men nu kan vi även visa vilka LOG/ZIP-filer som använts per fordon.
     """
     serials_list = [s.strip() for s in serials if s and s.strip()]
     if not serials_list:
-        print("No serial numbers specified for daily summary.")
+        print("No serial numbers specified for summary.")
         return
 
-    print(f"Running daily summary for date {date_for} and serials: {', '.join(serials_list)}")
+    print(
+        "Running summary for date range "
+        f"{date_from or '-'} to {date_to or '-'} "
+        f"and serials: {', '.join(serials_list)}"
+    )
 
-    # Hämta alla filer för dagen
+    # Hämta alla filer för intervallet
     log_files, zip_files = find_files_by_serial_and_date(
         base_path=base_path,
         serials=serials_list,
-        date_from=date_for,
-        date_to=date_for,
+        date_from=date_from,
+        date_to=date_to,
         include_zips=include_zips,
     )
 
-    print(f"Found {len(log_files)} LOG and {len(zip_files)} ZIP for daily summary.")
-    serials_with_logs: Set[str] = set()
+    print(f"Found {len(log_files)} LOG and {len(zip_files)} ZIP for summary.")
 
-    # Ta reda på vilka serienummer som faktiskt hade filer
+    serials_with_logs: Set[str] = set()
+    serial_sources = defaultdict(set)   # fordon/ID -> set(filnamn)
+
     serial_folder_re = re.compile(
         r"^(?:ipelog|ipelog2|ipelogger|logger|ipelog3|arcos2)_?(?P<sn>\d+)$",
         re.IGNORECASE,
     )
+    base_path_p = Path(base_path).resolve()
 
     def _serial_from_path(path: str) -> Optional[str]:
         p = Path(path)
@@ -563,47 +704,71 @@ def run_daily_summary(
                 return m.group("sn")
         return None
 
+    def _id_from_path(path: str) -> Optional[str]:
+        """
+        Gemensamt ID:
+        - gammal struktur → serienummer (8290xxxx)
+        - FT-struktur     → fordonsmapp (VISKAN, NIMROD, ...)
+        """
+        sn = _serial_from_path(path)
+        if sn:
+            return sn
+        try:
+            p = Path(path).resolve()
+            rel = p.relative_to(base_path_p)
+            if rel.parts:
+                return rel.parts[0]
+        except Exception:
+            pass
+        return None
+
     patterns = compile_keyword_patterns(keywords)
     all_lines: List[Tuple[str, int, str]] = []
 
-    # Vanliga LOG-filer
+    # -------- LOG-filer --------
     for log_path in log_files:
-        sn = _serial_from_path(log_path)
-        if sn:
-            serials_with_logs.add(sn)
+        id_ = _id_from_path(log_path)
+        if id_:
+            serials_with_logs.add(id_)
+            serial_sources[id_].add(os.path.basename(log_path))
+
         lines = filter_log_file(log_path, patterns, highlight_words)
         all_lines.extend(lines)
 
-    # ZIP-filer → extrahera och filtrera
+    # -------- ZIP-filer --------
     temp_dir: Optional[str] = None
     try:
         if zip_files:
             temp_dir = tempfile.mkdtemp()
-            print(f"Created temporary directory for ZIP extraction (daily summary): {temp_dir}")
+            print(f"Created temporary directory for ZIP extraction (summary): {temp_dir}")
             for zp in zip_files:
-                print(f"Processing ZIP file (daily summary): {os.path.basename(zp)}")
+                id_zip = _id_from_path(zp)
+                if id_zip:
+                    serials_with_logs.add(id_zip)
+                    # vi loggar ZIP-namnet som källa
+                    serial_sources[id_zip].add(os.path.basename(zp))
+
+                print(f"Processing ZIP file (summary): {os.path.basename(zp)}")
                 extracted = extract_log_files_from_zip(zp, temp_dir)
                 for log in extracted:
-                    sn = _serial_from_path(log)
-                    if sn:
-                        serials_with_logs.add(sn)
                     lines = filter_log_file(log, patterns, highlight_words)
                     all_lines.extend(lines)
     finally:
         if temp_dir and os.path.isdir(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # Skriv HTML-sammanfattning
-    output_html = f"{output_prefix}_daily_summary.html"
+    # Skriv HTML-sammanfattning (samma filnamn som tidigare)
+    output_html = f"{output_prefix}_summary.html"
     write_vehicle_summary_html(
         all_lines=all_lines,
         output_html=output_html,
         serials_all=serials_list,
         serials_with_logs=serials_with_logs,
+        page_title=page_title,
+        no_logs_heading="Vehicles has no LOG files in selected date range",
     )
 
-    print(f"Daily summary saved to: {os.path.abspath(output_html)}")
-
+    print(f"Summary saved to: {os.path.abspath(output_html)}")
 
 
 # ==========================================
