@@ -7,13 +7,13 @@ A fast, user-friendly tool for filtering large Ipemotion LOG files by serial num
 ### 1. Install dependencies
 
 ```bash
-pip install tkcalendar sv-ttk'
+pip install tkcalendar sv-ttk
 ```
 
 ### 2. Run the GUI
 
 ```bash
-python logfilter_gui_v3.py
+python logfilter_gui.py
 ```
 
 ## ✨ Features
